@@ -1,3 +1,5 @@
+import os
+from datetime import datetime
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -153,20 +155,38 @@ def estimate_loss():
     model.train()
     return out
 
-def plot_losses(losses, model_name)
-    plt.figure(figsize=(10, 5))
-    plt.plot(losses, linewidth=0.5, color="orange")
+def plot_losses(train_losses, val_losses, eval_interval=100, model_name="model"):
+    plt.figure(figsize=(15, 5))
+
     plt.grid(True)
+    plt.plot(train_losses, linewidth=0.5, color="orange", label="Training loss", alpha=0.8)
+    val_steps = [i * eval_interval for i in range(len(val_losses))]
+    plt.plot(val_steps, val_losses, linewidth=1, color="red")
+    plt.scatter(val_steps, val_losses, s=3, color="red", label="Validation loss")
 
     plt.xlabel("Training Steps")
     plt.ylabel("Loss")
-    plt.title(f"Training Loss for {model_name}")
-    plt.show()
+    plt.title(f"Training and validation losses for {model_name}")
+    plt.legend()
+    
+    plt.savefig(f"{dir_path}/loss_graphics/{model_name.split(' ')[0]}_{timestamp}.png")
 
+def generate_with_context(model, max_new_tokens=2000, context_str=""):
+    if len(context_str) % 2:
+        context_str = '\t' + context_str
+    context = torch.tensor((encode(context_str[ : len(context_str)//2]), 
+                            encode(context_str[len(context_str)//2 : ])), 
+                           dtype=torch.long, 
+                           device=device) \
+        if len(context_str) else \
+              torch.zeros((1, 1), dtype=torch.long, device=device)
+    return ("\n\nContext:\n " + "'" + context_str + "'" + "\n" + 
+            "Encoded context:\n" + str(context) + "\n" +
+            decode(model.generate(context, max_new_tokens=max_new_tokens)[0].tolist()))
 
 # Hyperparameters definition
 
-batch_size = 16 # how many independent sequences will we process in parallel
+batch_size = 256 # how many independent sequences will we process in parallel
 block_size = 32 # the maximum context length for predictions
 max_iters = 5000
 eval_interval = 100
@@ -178,13 +198,15 @@ n_head = 4
 n_layer = 4
 dropout = 0.0
 
+dir_path = os.path.dirname(__file__)
+timestamp = datetime.now().strftime("%d-%H-%M-%S")
 
 # Dataset processing
 
-songs_file = "./corpus_split_clean.txt"
+songs_file = dir_path + "/datasets/corpus_split_clean.txt"
 with open(songs_file, 'r', encoding='utf-8') as all_texts:
     songs = all_texts.read()
-print("Texts read from file")
+print("Texts read from file", songs_file)
 
 # gather the unique characters occurring in the text
 vocab = sorted(list(set(songs)))
@@ -205,37 +227,63 @@ val_data = data[n:]
 
 # Train model
 
+# set model
 model = BigramLanguageModel().to(device)
+model_name = "BigramLanguageModel with attention"
 print("The model includes", sum(param.numel() for param in model.parameters())/1e6, 'M parameters')
 
+# set optimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-loss_dynamics = []
 
+# set loss and checkpoint logging
+loss_dynamics_train, loss_dynamics_val = [], []
+best_val_loss = float('inf')
+best_model_weights = None
+checkpts_path = dir_path + f"/checkpoints/best_bigram_{timestamp}.pth"
+
+print(f"Start model training on {device}...")
 for iter in range(max_iters):
     # every once in a while evaluate the loss on train and val sets
     if (not iter % eval_interval) or (iter == max_iters - 1):
         losses = estimate_loss()
-        print(f"Step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        print(f"    Step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        loss_dynamics_val.append(losses['val'])
+
+        if losses['val'] < best_val_loss:
+            best_val_loss = losses['val']
+            best_weights = model.state_dict().copy()
+            torch.save({
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "iter": iter,
+                "best_val_loss": best_val_loss,
+            }, checkpts_path)
 
     xb, yb = get_batch('train')
     logits, loss = model(xb, yb)
-    loss_dynamics.append(loss.item())
+
+    loss_dynamics_train.append(loss.item())
 
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
 
+print(f"Training complete. Best val loss: {best_val_loss:.4f}")
+
 # Show train results: vizualization + generation
 
-plot_losses(loss_dynamics, "BigramLanguageModel with attention")
+# plot model's loss
+if best_weights is not None:
+    model.load_state_dict(best_weights)
+plot_losses(loss_dynamics_train, loss_dynamics_val, model_name=model_name)
 
-# context = torch.zeros((1, 1), dtype=torch.long, device=device)
-context_str = "Выйду ночью в поле с конем"
-context = torch.tensor((encode(context_str[ : len(context_str)//2]), 
-                        encode(context_str[len(context_str)//2 : ])), 
-                       dtype=torch.long, 
-                       device=device)
-
-print("Context: ", context_str)
-print(context, "\n")
-print(decode(model.generate(context, max_new_tokens=2000)[0].tolist()))
+print("\nGeneration examples:")
+generation_file = f"{dir_path}/generation_examples/{model_name.split(' ')[0]}_{timestamp}.txt"
+context_strs = ["",
+                "Не в чистом поле, не в пустой степи",
+                "Выйду ночью в поле с конем",
+                "Аааааа"]
+with open(generation_file, 'w', encoding='utf-8') as generation:
+    for context_str in context_strs:
+        generation.write(generate_with_context(model, 2000, context_str))
+        print("Generation for context '" + context_str + "' done")
