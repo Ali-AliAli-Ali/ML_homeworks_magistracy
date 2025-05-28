@@ -1,0 +1,35 @@
+Дополнение к домашнему заданию 2 - включение в сеть разреженной Mixture of Experts. Код (с конфигурацией последнего эксперимента), соответствующие графики и примеры генерации прилагаю, метрики описаны ниже. 
+
+Вес регуляризации MoE для роутера далее, как в коде, обозначен moe_coeff, количество экспертов - num_experts, количество выбираемых роутером экспертов - topk_experts.
+
+По невнимательности в исходной реализации лосс суммировался с лоссом MoE, домноженным на moe_coeff, и потому оказывался закономерно выше такового без MoE - потому об изменении качества модели можно судить фактически только по повышению качества генерации. В самом последнем эксперименте лоссы исправлены и могут быть сопоставлены с таковыми без MoE; код приводится для последнего, наиболее корректного формата.
+
+{ moe_coeff = 0.2, num_experts = 4, topk_experts = 2 }
+- train loss 3.0367,
+- val loss 3.4964,
+- best val loss 3.4308.
+
+{ moe_coeff = 0.1, num_experts = 4, topk_experts = 2 }
+- train loss 2.2436,
+- val loss 2.7004
+- best val loss 2.6324
+
+{ moe_coeff = 0.05, num_experts = 4, topk_experts = 2 }
+- train loss 1.8368,
+- val loss 2.3090,
+- best val loss 2.2297.
+
+{ moe_coeff = 0.05, num_experts = 8, topk_experts = 2 }
+- train loss 1.7726,
+- val loss 2.3502,
+- best val loss 2.2339.
+
+{ moe_coeff = 0.05, num_experts = 8, topk_experts = 4 }
+- train loss 2.0899,
+- val loss 2.8334,
+- best val loss 2.6318.
+
+{ moe_coeff = 0.05, num_experts = 8, topk_experts = 4 }  # here loss is demonstrated without moe_loss addition
+- train loss 1.2897,
+- val loss 2.0331,
+- best val loss: 1.8312.
